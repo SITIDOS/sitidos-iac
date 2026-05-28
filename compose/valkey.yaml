@@ -1,0 +1,111 @@
+# Sitidos Valkey — F8 deliverable
+#
+# Single primary + one read replica, AOF persistence on, RDB off.
+# Cluster mode disabled (F8 spec: single primary + replica until scale demands it).
+#
+# Scope (per F8 + D1):
+#   - ratelimit:${service}:${principal_id}:${window}     counters (TTL <= window)
+#   - jwks:${issuer}                                     JWK set caches (TTL 10m)
+#   - coalescer:${user_id}:${action}:${resource_id}      PDP coalescer windows (TTL <= 100ms)
+#   - revalidate:cursor:${tag}                           ISR invalidation cursors (TTL 24h)
+#   - revalidate:bus                                     Pub/Sub channel (fire-and-forget, no retention)
+#
+# Hard prohibitions enforced by client (packages/valkey-client):
+#   - No persistent user data (D1: Iceberg-only persistence).
+#   - No keys outside the four declared namespaces.
+#   - No TTLs > 24h.
+#
+# Bring up standalone (F8 dev/test):
+#   docker compose -f compose/valkey.yaml up -d
+#
+# Joining the broader sitidos network (when running alongside stack/compose/sitidos.yml):
+#   The stack/compose/sitidos.yml `valkey` service remains the canonical wiring for the
+#   integrated stack. This file is the F8-owned standalone topology (primary + replica)
+#   used by packages/valkey-client integration tests and by ops for replica failover drills.
+#
+# ARM64-first per global prohibitions; bit-identical on macbook dev and Oracle ARM Ampere prod.
+
+name: sitidos-valkey
+
+networks:
+  valkey:
+    driver: bridge
+
+volumes:
+  valkey-primary-data:
+  valkey-replica-data:
+
+services:
+  # ---------------------------------------------------------------------------
+  # Primary — accepts writes, AOF persistence.
+  # ---------------------------------------------------------------------------
+  valkey-primary:
+    image: valkey/valkey:8-alpine
+    platform: linux/arm64
+    container_name: sitidos-valkey-primary
+    restart: unless-stopped
+    ports:
+      - "6380:6379"
+    volumes:
+      - valkey-primary-data:/data
+      - ../stack/config/valkey/valkey.conf:/etc/valkey/valkey.conf:ro
+    command:
+      - "valkey-server"
+      - "/etc/valkey/valkey.conf"
+      - "--appendonly"
+      - "yes"
+      - "--appendfsync"
+      - "everysec"
+      - "--save"
+      - ""
+      - "--maxmemory"
+      - "256mb"
+      - "--maxmemory-policy"
+      - "allkeys-lru"
+      - "--notify-keyspace-events"
+      - "Ex"
+    healthcheck:
+      test: ["CMD", "valkey-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+    networks: [valkey]
+
+  # ---------------------------------------------------------------------------
+  # Replica — read-only mirror for ops failover drills + observability scrapes.
+  # ---------------------------------------------------------------------------
+  valkey-replica:
+    image: valkey/valkey:8-alpine
+    platform: linux/arm64
+    container_name: sitidos-valkey-replica
+    restart: unless-stopped
+    depends_on:
+      valkey-primary:
+        condition: service_healthy
+    ports:
+      - "6381:6379"
+    volumes:
+      - valkey-replica-data:/data
+    command:
+      - "valkey-server"
+      - "--replicaof"
+      - "valkey-primary"
+      - "6379"
+      - "--replica-read-only"
+      - "yes"
+      - "--appendonly"
+      - "yes"
+      - "--appendfsync"
+      - "everysec"
+      - "--save"
+      - ""
+      - "--maxmemory"
+      - "256mb"
+      - "--maxmemory-policy"
+      - "allkeys-lru"
+    healthcheck:
+      test: ["CMD", "valkey-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+    networks: [valkey]
