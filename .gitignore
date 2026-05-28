@@ -1,0 +1,28 @@
+# Terraform
+.terraform/
+*.tfstate
+*.tfstate.*
+*.tfplan
+crash.log
+override.tf
+override.tf.json
+*_override.tf
+*_override.tf.json
+.terraformrc
+terraform.rc
+
+# Docker stack runtime data (volumes, logs)
+stack/data/
+stack/logs/
+
+# Env / secrets
+.env
+.env.*
+!.env.example
+secrets/
+
+# OpenBao runtime
+openbao/data/
+
+# OS
+.DS_Store

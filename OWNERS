@@ -1,0 +1,10 @@
+# sitidos-iac owners
+
+F2 — OpenBao + secrets engines
+F3 — Compose stack + launchd supervisor
+F11 — Terraform (Cloudflare, Vercel, Turso)
+
+PR review:
+- Any image tag bump or service addition → F3.
+- Any Terraform provider/version bump → F11.
+- Any OpenBao policy or PKI role → F2.
