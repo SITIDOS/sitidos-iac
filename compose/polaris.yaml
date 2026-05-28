@@ -1,0 +1,124 @@
+# F14 — Apache Polaris Catalog (standalone compose overlay)
+#
+# This is the canonical, foundation-scoped service definition for Polaris.
+# It is intentionally a STANDALONE overlay so it can be:
+#   - composed alone for catalog-only smoke tests:
+#       docker compose -f compose/polaris.yaml up -d
+#   - merged with the full stack:
+#       docker compose -f stack/compose/sitidos.yml -f compose/polaris.yaml up -d
+#
+# The service block here is the source of truth; the inline copy in
+# stack/compose/sitidos.yml is a convenience mirror maintained by F3 and MUST
+# remain bit-identical to this file's `polaris:` service.
+#
+# Laws:
+#   D3  — apache/polaris:1.5.0 is the locked image (ARM64 PASS per validation
+#         memo foundation-validation-2026-05-28.md). No Nessie.
+#   D4  — R2 bucket per workspace is the cryptoshred unit; Polaris addresses
+#         object storage via S3-compatible API.
+#   I5  — Catalog entries declare ARM64 field; this stack is linux/arm64-only.
+#
+# Hard prohibitions:
+#   - No catalog image other than apache/polaris:1.5.0 until a NEW validation
+#     memo is filed.
+#   - No backend other than R2 (S3-compat).
+#   - No service principal with cross-namespace write access (least privilege)
+#     — enforced by iac/polaris/bootstrap.sh.
+#   - No direct snapshot mutation outside the Polaris API.
+#
+# Required secrets (surface as org-scope GitHub secrets when first dispatched):
+#   R2_ACCESS_KEY_ID      — Cloudflare R2 access key (S3-compat)
+#   R2_SECRET_ACCESS_KEY  — Cloudflare R2 secret key (S3-compat)
+#   R2_ENDPOINT_URL       — https://<account>.r2.cloudflarestorage.com
+#   R2_BUCKET             — sitidos-catalog bucket name
+#   POLARIS_ROOT_CREDS    — bootstrap root principal "client_id:client_secret"
+#   VALKEY_URL            — redis://valkey:6379 (consumed by snapshot-publisher)
+#
+# These are NOT committed. CI / launchd loads them from .env (gitignored) or
+# from OpenBao at runtime. See iac/polaris/r2-backend.json for the binding map.
+
+name: sitidos-polaris
+
+networks:
+  sitidos:
+    driver: bridge
+    name: sitidos
+    external: false
+
+services:
+  # ---------------------------------------------------------------------------
+  # polaris — Iceberg REST catalog (Apache Polaris 1.5.0)
+  # ---------------------------------------------------------------------------
+  polaris:
+    image: apache/polaris:1.5.0
+    platform: linux/arm64
+    container_name: sitidos-polaris
+    restart: unless-stopped
+    environment:
+      # Bootstrap root principal — used ONLY by iac/polaris/bootstrap.sh on
+      # first boot to create per-namespace service principals, then rotated.
+      - POLARIS_BOOTSTRAP_CREDENTIALS=${POLARIS_ROOT_CREDS:-root:CHANGE-ME-AT-BOOTSTRAP}
+      # Persistence: in-process EclipseLink (H2) for dev; F14 follow-up will
+      # back this with R2-mounted Postgres-compat. NOT in F14 v0.1 scope.
+      - polaris.persistence.type=eclipse-link
+      - polaris.realm-context.realms=sitidos
+      - polaris.features."ALLOW_OVERLAPPING_CATALOG_URLS"=true
+      - polaris.features."ENABLE_GENERIC_TABLES"=true
+      - quarkus.log.level=INFO
+      # R2 backend (S3-compatible). Polaris hands these as STS-like creds to
+      # readers/writers via vended-credentials per-table grant (least-priv).
+      - AWS_REGION=auto
+      - AWS_ACCESS_KEY_ID=${R2_ACCESS_KEY_ID:?R2_ACCESS_KEY_ID required — see iac/polaris/r2-backend.json}
+      - AWS_SECRET_ACCESS_KEY=${R2_SECRET_ACCESS_KEY:?R2_SECRET_ACCESS_KEY required}
+      - AWS_ENDPOINT_URL_S3=${R2_ENDPOINT_URL:?R2_ENDPOINT_URL required}
+      - POLARIS_DEFAULT_WAREHOUSE=sitidos
+      - POLARIS_DEFAULT_WAREHOUSE_BUCKET=${R2_BUCKET:?R2_BUCKET required}
+    ports:
+      - "8181:8181"   # Catalog REST API — consumed by F1 / F2 / F15 / F17
+      - "8182:8182"   # Management/health API — admin + healthcheck only
+    volumes:
+      - ../stack/data/polaris:/var/lib/polaris
+      - ../stack/config/polaris:/opt/polaris/config:ro
+    healthcheck:
+      # Polaris exposes Quarkus health on the management port.
+      test: ["CMD-SHELL", "curl -sf http://localhost:8182/q/health/ready || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 10
+      start_period: 30s
+    labels:
+      - "sitidos.foundation=F14"
+      - "sitidos.arm64=true"
+      - "sitidos.law=D3"
+    networks: [sitidos]
+
+  # ---------------------------------------------------------------------------
+  # polaris-snapshot-publisher — F14 sidecar
+  # Polls Polaris for new snapshots and republishes them on Valkey pub/sub
+  # channel `polaris.snapshots` for F2 (reader cache invalidation) and F17
+  # (ISR-at-edge invalidation bus).
+  # ---------------------------------------------------------------------------
+  polaris-snapshot-publisher:
+    build:
+      context: ../iac/polaris/snapshot-publisher
+      dockerfile: Dockerfile
+    image: sitidos/polaris-snapshot-publisher:0.1.0
+    platform: linux/arm64
+    container_name: sitidos-polaris-snapshot-publisher
+    restart: unless-stopped
+    depends_on:
+      polaris:
+        condition: service_healthy
+    environment:
+      - POLARIS_URL=http://polaris:8181
+      - POLARIS_REALM=sitidos
+      - POLARIS_PRINCIPAL_ID=${POLARIS_PUBLISHER_ID:-f14-publisher}
+      - POLARIS_PRINCIPAL_SECRET=${POLARIS_PUBLISHER_SECRET:?POLARIS_PUBLISHER_SECRET required — issued by bootstrap.sh}
+      - VALKEY_URL=${VALKEY_URL:-redis://valkey:6379}
+      - VALKEY_CHANNEL=polaris.snapshots
+      - POLL_INTERVAL_SECONDS=5
+      - NAMESPACES=control,identity,esign,acl,obs,dataroom,crm
+    labels:
+      - "sitidos.foundation=F14"
+      - "sitidos.role=snapshot-publisher"
+    networks: [sitidos]

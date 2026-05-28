@@ -1,0 +1,103 @@
+{
+  "$schema": "https://sitidos.app/schemas/iac/polaris/r2-backend.v1.json",
+  "_comment": [
+    "F14 — Cloudflare R2 backend declaration for Apache Polaris (D3 + D4).",
+    "This file is the DECLARATIVE source of truth for the catalog's object",
+    "storage. It MUST NOT contain secret values; references resolve at",
+    "runtime to org-scope GitHub secrets and/or OpenBao paths.",
+    "",
+    "Required org-scope GitHub secrets (founder provisions on first dispatch):",
+    "  - R2_ACCESS_KEY_ID      (Cloudflare R2 access key, S3-compat)",
+    "  - R2_SECRET_ACCESS_KEY  (Cloudflare R2 secret key, S3-compat)",
+    "",
+    "All other values are public configuration."
+  ],
+  "provider": "cloudflare-r2",
+  "compatibility": "s3",
+  "region": "auto",
+  "bucket": {
+    "name": "sitidos-catalog",
+    "purpose": "Iceberg warehouse — all 7 sitidos namespaces",
+    "object_lock": false,
+    "versioning": true,
+    "lifecycle": {
+      "delete_marker_expiration_days": 90,
+      "noncurrent_version_expiration_days": 30,
+      "abort_incomplete_multipart_days": 7
+    }
+  },
+  "endpoint": {
+    "url_env": "R2_ENDPOINT_URL",
+    "url_example": "https://<account_id>.r2.cloudflarestorage.com",
+    "path_style_access": true
+  },
+  "credentials": {
+    "type": "static_access_key",
+    "access_key_id_env": "R2_ACCESS_KEY_ID",
+    "secret_access_key_env": "R2_SECRET_ACCESS_KEY",
+    "openbao_fallback": {
+      "path": "secret/r2/sitidos-catalog",
+      "fields": {
+        "access_key_id": "access_key_id",
+        "secret_access_key": "secret_access_key"
+      }
+    },
+    "rotation_policy": {
+      "interval": "quarterly",
+      "owner": "F14",
+      "runbook": "iac/polaris/runbooks/catalog-recovery.md#rotation"
+    }
+  },
+  "iam_model": {
+    "_comment": [
+      "Polaris vends per-principal credentials downstream; the R2 token here",
+      "is the CATALOG's own credential to the bucket. F1 / F2 / F15 never",
+      "see this token — they receive scoped, short-lived creds from Polaris.",
+      "",
+      "Hard prohibitions enforced by iac/polaris/bootstrap.sh:",
+      "  - No principal with TABLE_WRITE_DATA across more than its assigned",
+      "    namespaces (least privilege).",
+      "  - No principal with PRINCIPAL_MANAGE."
+    ],
+    "principals": [
+      {
+        "name": "f1-writer",
+        "consumer": "F1 Iceberg writer",
+        "write_namespaces": ["control", "identity", "esign", "acl", "dataroom", "crm"],
+        "read_namespaces": ["control", "identity", "esign", "acl", "dataroom", "crm"]
+      },
+      {
+        "name": "f2-reader",
+        "consumer": "F2 DuckDB reader",
+        "write_namespaces": [],
+        "read_namespaces": ["control", "identity", "esign", "acl", "obs", "dataroom", "crm"]
+      },
+      {
+        "name": "f15-otel-pipeline",
+        "consumer": "F15 OTel → Iceberg parquet writer",
+        "write_namespaces": ["obs"],
+        "read_namespaces": ["obs"]
+      },
+      {
+        "name": "f14-publisher",
+        "consumer": "F14 snapshot-publisher sidecar (this foundation)",
+        "write_namespaces": [],
+        "read_namespaces": ["control", "identity", "esign", "acl", "obs", "dataroom", "crm"],
+        "metadata_only": true
+      }
+    ]
+  },
+  "namespaces": [
+    { "name": "control",  "cryptoshred_coverage": "org",       "arm64": true },
+    { "name": "identity", "cryptoshred_coverage": "workspace", "arm64": true },
+    { "name": "esign",    "cryptoshred_coverage": "workspace", "arm64": true },
+    { "name": "acl",      "cryptoshred_coverage": "workspace", "arm64": true },
+    { "name": "obs",      "cryptoshred_coverage": "none",      "arm64": true },
+    { "name": "dataroom", "cryptoshred_coverage": "workspace", "arm64": true },
+    { "name": "crm",      "cryptoshred_coverage": "workspace", "arm64": true }
+  ],
+  "required_org_secrets": [
+    "R2_ACCESS_KEY_ID",
+    "R2_SECRET_ACCESS_KEY"
+  ]
+}
