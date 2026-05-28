@@ -24,11 +24,15 @@ secrets/
 # OpenBao runtime
 openbao/data/
 
-# Node / TypeScript packages (F8)
+# OS
+.DS_Store
+
+# Node / TypeScript (packages/*)
 node_modules/
+dist/
+*.tsbuildinfo
 packages/*/dist/
 packages/*/*.tsbuildinfo
 packages/*/coverage/
-
-# OS
-.DS_Store
+package-lock.json
+.vitest-cache/
