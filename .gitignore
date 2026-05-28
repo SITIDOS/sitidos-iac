@@ -26,3 +26,9 @@ openbao/data/
 
 # OS
 .DS_Store
+
+# Node / TS (packages/*)
+node_modules/
+dist/
+*.tsbuildinfo
+.vitest-cache/

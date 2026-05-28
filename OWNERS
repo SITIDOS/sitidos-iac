@@ -2,9 +2,11 @@
 
 F2 — OpenBao + secrets engines
 F3 — Compose stack + launchd supervisor
+F9 — Cloudflare tunnel + DNS (`iac/cloudflare/`, `packages/cloudflare-client/`, `packages/vercel-alias-client/`)
 F11 — Terraform (Cloudflare, Vercel, Turso)
 
 PR review:
 - Any image tag bump or service addition → F3.
 - Any Terraform provider/version bump → F11.
 - Any OpenBao policy or PKI role → F2.
+- Any change under `iac/cloudflare/`, `packages/cloudflare-client/`, `packages/vercel-alias-client/`, or `docs/runbooks/tunnel-migration.md` → F9.

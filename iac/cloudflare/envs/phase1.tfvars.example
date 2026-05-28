@@ -1,0 +1,12 @@
+# Copy to phase1.tfvars (gitignored) and fill from OpenBao + CF dashboard.
+# NEVER commit the populated file.
+
+# Non-secret, stable per environment:
+cloudflare_account_id = "REPLACE_ME_ACCOUNT_ID"
+cloudflare_zone_id    = "REPLACE_ME_ZONE_ID_FOR_sitidos.app"
+tunnel_target_machine = "macbook" # Phase 1/2; flip to "oracle-arm-phase3" at cutover.
+
+# Secret: sourced from OpenBao at infra/cloudflare/terraform_token.
+# Prefer `export TF_VAR_cloudflare_api_token=$(bao kv get -field=token infra/cloudflare/terraform_token)`
+# over putting it in this file at all.
+# cloudflare_api_token = "..."
