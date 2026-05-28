@@ -31,4 +31,8 @@ openbao/data/
 node_modules/
 dist/
 *.tsbuildinfo
+packages/*/dist/
+packages/*/*.tsbuildinfo
+packages/*/coverage/
 package-lock.json
+.vitest-cache/

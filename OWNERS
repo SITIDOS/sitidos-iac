@@ -4,6 +4,7 @@ F2 — OpenBao + secrets engines (legacy ownership; superseded for OpenBao by F7
 F3 — Compose stack + launchd supervisor
 F7 — OpenBao integration (per-workspace cryptoshred keys, D4):
        iac/openbao/, compose/openbao.yaml, packages/openbao-client/
+F9 — Cloudflare tunnel + DNS (iac/cloudflare/, packages/cloudflare-client/, packages/vercel-alias-client/)
 F11 — Terraform (Cloudflare, Vercel, Turso)
 
 PR review:
@@ -11,3 +12,4 @@ PR review:
 - Any Terraform provider/version bump → F11.
 - Any OpenBao policy, transit key path, or destroyKey contract change → F7.
 - Any PKI engine role (non-OpenBao secrets engines) → F2.
+- Any change under iac/cloudflare/, packages/cloudflare-client/, packages/vercel-alias-client/, or docs/runbooks/tunnel-migration.md → F9.
