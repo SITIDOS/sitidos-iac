@@ -1,0 +1,52 @@
+# F10 — Observability Core — OpenTelemetry Collector compose snippet
+#
+# This is the canonical F10 deliverable per `docs/agents/F10.md` (#1).
+# The live backplane stack at `stack/compose/sitidos.yml` already includes
+# the otel-collector service block; this file is the standalone, drop-in
+# version used by other foundations / verticals that need to spin up only
+# the observability hop (e.g., F13 k6 runs, F15 pipeline integration tests).
+#
+# Bring up standalone:
+#   docker compose -f compose/otel-collector.yaml up -d
+#
+# Bring up with the full backplane:
+#   docker compose -f stack/compose/sitidos.yml up -d
+#
+# Per ADR-0005 §F14–F17 stack delta.
+# Validation memo: docs/agents/foundation-validation-2026-05-28.md (PR #54).
+
+name: sitidos-obs
+
+networks:
+  sitidos-obs:
+    driver: bridge
+
+services:
+  otel-collector:
+    image: otel/opentelemetry-collector-contrib:0.115.1
+    platform: linux/arm64
+    container_name: sitidos-otel-collector
+    restart: unless-stopped
+    command: ["--config=/etc/otelcol-contrib/config.yaml"]
+    volumes:
+      - ./otel-collector.config.yaml:/etc/otelcol-contrib/config.yaml:ro
+      - ../data/otel-collector:/var/lib/otelcol
+    ports:
+      - "4317:4317"   # OTLP gRPC
+      - "4318:4318"   # OTLP HTTP
+      - "8888:8888"   # Collector self-telemetry (Prometheus scrape)
+      - "13133:13133" # Health check extension
+    environment:
+      # Sentry envelope endpoint key; DSN is per-environment org-secret (see F10
+      # prompt — flag for org-secret provisioning rather than committing).
+      - SENTRY_DSN_KEY=${SENTRY_DSN_KEY:-}
+      - DEPLOYMENT_ENV=${DEPLOYMENT_ENV:-dev}
+      # Release tag = git SHA (set by CI; falls back to `dev` locally).
+      - SITIDOS_RELEASE=${SITIDOS_RELEASE:-dev}
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:13133/"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    networks: [sitidos-obs]

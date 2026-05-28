@@ -1,0 +1,9 @@
+{
+  "name": "@sitidos/iac-packages",
+  "version": "0.1.0",
+  "private": true,
+  "description": "F10 observability packages workspace root. See packages/README.md.",
+  "workspaces": [
+    "packages/*"
+  ]
+}

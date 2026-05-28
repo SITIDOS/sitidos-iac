@@ -1,0 +1,24 @@
+{
+  "name": "@sitidos/observability",
+  "version": "0.1.0",
+  "private": true,
+  "description": "F10 hand-off contract: single initObservability() call wires OTel + Sentry + logger.",
+  "type": "module",
+  "main": "src/index.ts",
+  "types": "src/index.ts",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "lint": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@sitidos/logger": "*",
+    "@sitidos/otel-sdk": "*",
+    "@sitidos/sentry-init": "*"
+  },
+  "peerDependencies": {
+    "typescript": "^5.4.0"
+  }
+}
