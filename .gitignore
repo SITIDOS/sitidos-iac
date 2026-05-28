@@ -27,8 +27,12 @@ openbao/data/
 # OS
 .DS_Store
 
-# Node / TS (packages/*)
+# Node / TypeScript (packages/*)
 node_modules/
 dist/
 *.tsbuildinfo
+packages/*/dist/
+packages/*/*.tsbuildinfo
+packages/*/coverage/
+package-lock.json
 .vitest-cache/

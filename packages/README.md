@@ -1,23 +1,47 @@
 # `packages/`
 
-TypeScript packages published as `@sitidos/*` for internal consumption by
-the orchestrator, F-prompts, and the Next.js shell.
+TypeScript packages for internal consumption (`@sitidos/*`), built and tested
+per-package. There is intentionally no monorepo toolchain in this repo yet;
+F19 may introduce pnpm workspaces if the package count grows.
 
 | Package | Owner | Purpose |
 |---|---|---|
-| `cloudflare-client/` | F9 | Typed Cloudflare API wrapper: DNS write, cache purge, WAF rule list. Per-service scoped tokens. |
-| `vercel-alias-client/` | F9 | Typed wrapper for Vercel project-domain alias creation. Used by F20 at org-create time. |
+| `valkey-client/` | F8 | Typed, namespace-disciplined Valkey SDK. |
+| `coalescer/` | F8 | In-process per-key request coalescer (F4 D9b slow path). |
+| `ratelimit/` | F8 | Sliding-window rate limiter (F3 per-route). |
+| `cloudflare-client/` | F9 | Typed Cloudflare API wrapper (DNS write, cache purge, WAF list); per-service scoped tokens. |
+| `vercel-alias-client/` | F9 | Typed Vercel project-domain alias creation; used by F20 at org-create. |
+| `otel-sdk/` | F10 | Trace + metric + log auto-instrumentation, sampling policy. |
+| `sentry-init/` | F10 | Sentry SDK wiring; auto-tags `org_id` + `workspace_id`. |
+| `logger/` | F10 | Structured logger emitting OTel-compatible log records. |
+| `observability/` | F10 | Barrel — exports `initObservability()` (F10 hand-off contract). |
 
-## Layout convention
+## Conventions
 
-Each package:
-- ESM-only (`"type": "module"`).
-- Source ships in `src/` (no build step in Phase-1; bundlers consume `.ts`).
-- Zod-validated I/O at API boundaries.
-- Vitest unit tests adjacent (`src/*.test.ts`).
-- `tsc --noEmit` typecheck via `npm run typecheck`.
-- Vitest run via `npm run test`.
+- Node 22, ARM64-first (matches `stack/` images).
+- TypeScript strict mode, ESM-only (`"type": "module"`).
+- Public exports go through `src/index.ts`; everything else is internal.
+- Zod-validated I/O at API boundaries (clients).
+- Vitest unit tests adjacent; integration tests live in `sitidos-tests` (F13).
+- `tsc --noEmit` typecheck via `npm run typecheck`; tests via `npm run test`.
 
-The dispatch contract `@sitidos/iac-clients` mentioned in F9.md is the
-forthcoming meta-package that re-exports both clients; tracking issue to
-be opened once F20 lands and the bundle layout is finalized.
+## Build
+
+Each package carries its own `package.json`:
+
+```bash
+cd packages/<name> && npm install && npm run build && npm test
+```
+
+## Observability hand-off (F10)
+
+```ts
+import { initObservability } from "@sitidos/observability";
+initObservability({ service: "rpc-backplane" });
+```
+
+That single call wires the OTLP exporter (pointing at the local otel-collector),
+the Sentry SDK, and a logger bound to the active OTel context (so every log
+record carries `trace_id`). Hard prohibitions enforced in code: no `console.log`
+in production; no PII in attributes; no role names (D14) or auth-provider names
+(D13) in Sentry tags; success-trace sampling clamped to ≤ 0.1 in production.
