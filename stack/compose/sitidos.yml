@@ -11,6 +11,12 @@
 # Tail logs:   docker compose -f compose/sitidos.yml logs -f
 # Tear down:   docker compose -f compose/sitidos.yml down
 # Wipe data:   docker compose -f compose/sitidos.yml down -v && rm -rf data/*/*
+#
+# Per ADR-0005 stack delta:
+#   ADDED:    polaris (F14), otel-collector (F10), parquet-writer (F15), revalidator (F17)
+#   REMOVED:  opensearch + opensearch-dashboards (replaced by obs.* Iceberg tables, F15/F16)
+#             documenso + documenso-db (moved to private sitidos-esign repo;
+#                                       AGPL §13 containment; Iceberg-backed Prisma adapter)
 
 name: sitidos
 
@@ -20,7 +26,7 @@ networks:
 
 services:
   # -------------------------------------------------------------------------
-  # Valkey 8 — perms cache (60s TTL keyed by (user, workspace, generation))
+  # F8 — Valkey 8 — cache + invalidation cursors + ISR pub/sub
   # -------------------------------------------------------------------------
   valkey:
     image: valkey/valkey:8-alpine
@@ -41,57 +47,8 @@ services:
     networks: [sitidos]
 
   # -------------------------------------------------------------------------
-  # OpenSearch — OTel log sink + p95 metrics
-  # Single-node, security disabled in dev (Cloudflare Tunnel terminates TLS).
-  # -------------------------------------------------------------------------
-  opensearch:
-    image: opensearchproject/opensearch:2.18.0
-    platform: linux/arm64
-    container_name: sitidos-opensearch
-    restart: unless-stopped
-    environment:
-      - cluster.name=sitidos
-      - node.name=sitidos-os-1
-      - discovery.type=single-node
-      - bootstrap.memory_lock=true
-      - plugins.security.disabled=true
-      - "OPENSEARCH_JAVA_OPTS=-Xms512m -Xmx512m"
-      # macOS Docker Desktop ignores ulimit memlock; harmless when migrating to Linux.
-      - DISABLE_INSTALL_DEMO_CONFIG=true
-    ulimits:
-      memlock: { soft: -1, hard: -1 }
-      nofile:  { soft: 65536, hard: 65536 }
-    ports:
-      - "9200:9200"
-      - "9600:9600"
-    volumes:
-      - ../data/opensearch:/usr/share/opensearch/data
-    healthcheck:
-      test: ["CMD-SHELL", "curl -s http://localhost:9200/_cluster/health | grep -qE '\"status\":\"(green|yellow)\"'"]
-      interval: 15s
-      timeout: 5s
-      retries: 10
-      start_period: 60s
-    networks: [sitidos]
-
-  opensearch-dashboards:
-    image: opensearchproject/opensearch-dashboards:2.18.0
-    platform: linux/arm64
-    container_name: sitidos-opensearch-dashboards
-    restart: unless-stopped
-    depends_on:
-      opensearch:
-        condition: service_healthy
-    environment:
-      - OPENSEARCH_HOSTS=["http://opensearch:9200"]
-      - DISABLE_SECURITY_DASHBOARDS_PLUGIN=true
-    ports:
-      - "5601:5601"
-    networks: [sitidos]
-
-  # -------------------------------------------------------------------------
-  # OpenBao — per-workspace cryptoshred keys + PKI engine for e-sign certs
-  # Dev mode for now; F2 agent replaces with prod auto-unseal + KV-v2 + PKI roles.
+  # F7 — OpenBao — per-workspace cryptoshred keys (D4) + PKI for e-sign certs
+  # Dev mode for now; F7 agent replaces with prod auto-unseal + KV-v2 + PKI roles.
   # -------------------------------------------------------------------------
   openbao:
     image: openbao/openbao:2.4.1
@@ -118,53 +75,120 @@ services:
     networks: [sitidos]
 
   # -------------------------------------------------------------------------
-  # Documenso — Tier-2 e-signature (multi-signer, sequential, audit-cert UX)
-  # AGPL boundary: called over HTTPS from FastMCP signature.sign, never linked.
+  # F14 — Apache Polaris — Iceberg catalog (per D3, replaces planned Nessie)
+  # Validation memo: apache/polaris:1.5.0 ARM64 PASS (~10 days old at memo time).
+  # R2 backend configured via env; bootstrap script at iac/polaris/bootstrap.sh.
   # -------------------------------------------------------------------------
-  documenso-db:
-    image: postgres:16-alpine
+  polaris:
+    image: apache/polaris:1.5.0
     platform: linux/arm64
-    container_name: sitidos-documenso-db
+    container_name: sitidos-polaris
     restart: unless-stopped
     environment:
-      - POSTGRES_USER=documenso
-      - POSTGRES_PASSWORD=documenso-dev-CHANGE-ME
-      - POSTGRES_DB=documenso
+      - POLARIS_BOOTSTRAP_CREDENTIALS=root:secret
+      - polaris.persistence.type=eclipse-link
+      - polaris.realm-context.realms=sitidos
+      - polaris.features."ALLOW_OVERLAPPING_CATALOG_URLS"=true
+      - quarkus.log.level=INFO
+      # R2 backend (S3-compatible) — populated from sitidos-iac/secrets
+      - AWS_REGION=auto
+      - AWS_ACCESS_KEY_ID=${R2_ACCESS_KEY_ID:-CHANGE-ME}
+      - AWS_SECRET_ACCESS_KEY=${R2_SECRET_ACCESS_KEY:-CHANGE-ME}
+      - AWS_ENDPOINT_URL_S3=${R2_ENDPOINT_URL:-https://CHANGE-ME.r2.cloudflarestorage.com}
+    ports:
+      - "8181:8181"   # Catalog API
+      - "8182:8182"   # Management API (admin only; not exposed externally)
     volumes:
-      - ../data/documenso-db:/var/lib/postgresql/data
+      - ../data/polaris:/var/lib/polaris
+      - ../config/polaris:/opt/polaris/config:ro
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U documenso"]
-      interval: 10s
-      timeout: 3s
-      retries: 5
+      test: ["CMD-SHELL", "curl -sf http://localhost:8182/q/health/ready || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 10
+      start_period: 30s
     networks: [sitidos]
 
-  documenso:
-    image: documenso/documenso:latest
+  # -------------------------------------------------------------------------
+  # F10 — OpenTelemetry Collector — receives traces/metrics/logs from all services
+  # Exports to parquet-writer (Iceberg via F15) and Sentry SaaS.
+  # Config at ../config/otel-collector/config.yaml (managed by F10 agent).
+  # -------------------------------------------------------------------------
+  otel-collector:
+    image: otel/opentelemetry-collector-contrib:0.115.1
     platform: linux/arm64
-    container_name: sitidos-documenso
+    container_name: sitidos-otel-collector
+    restart: unless-stopped
+    command: ["--config=/etc/otelcol-contrib/config.yaml"]
+    volumes:
+      - ../config/otel-collector/config.yaml:/etc/otelcol-contrib/config.yaml:ro
+      - ../data/otel-collector:/var/lib/otelcol  # batched parquet output dir
+    ports:
+      - "4317:4317"   # OTLP gRPC
+      - "4318:4318"   # OTLP HTTP
+      - "8888:8888"   # Collector metrics
+    environment:
+      - SENTRY_DSN=${SENTRY_DSN:-}
+    networks: [sitidos]
+
+  # -------------------------------------------------------------------------
+  # F15 — parquet-writer sidecar — OTel → Iceberg landing pipeline
+  # Consumes batched parquet from otel-collector and commits to Polaris.
+  # 30s window or 10MB whichever first (per F15 spec).
+  # Image is sitidos-built; placeholder ghcr ref until F15 agent ships v0.1.
+  # -------------------------------------------------------------------------
+  parquet-writer:
+    image: ghcr.io/sitidos/parquet-writer:0.1.0-placeholder
+    platform: linux/arm64
+    container_name: sitidos-parquet-writer
     restart: unless-stopped
     depends_on:
-      documenso-db:
+      polaris:
+        condition: service_healthy
+      otel-collector:
+        condition: service_started
+    environment:
+      - POLARIS_URL=http://polaris:8181
+      - POLARIS_REALM=sitidos
+      - OPENBAO_URL=http://openbao:8200
+      - INPUT_DIR=/var/lib/otelcol
+      - BATCH_WINDOW_SECONDS=30
+      - BATCH_MAX_BYTES=10485760
+    volumes:
+      - ../data/otel-collector:/var/lib/otelcol:ro
+    profiles: [f15]   # disabled by default until F15 agent ships the image
+    networks: [sitidos]
+
+  # -------------------------------------------------------------------------
+  # F17 — revalidator sidecar — ISR-at-edge invalidation bus
+  # Subscribes to Polaris snapshot events via Valkey pub/sub, computes affected
+  # tag set per D7 taxonomy, calls Vercel revalidation API + Cloudflare cache purge.
+  # Target: p95 < 800ms commit-to-edge-invalidation.
+  # Image is sitidos-built; placeholder until F17 agent ships v0.1.
+  # -------------------------------------------------------------------------
+  revalidator:
+    image: ghcr.io/sitidos/revalidator:0.1.0-placeholder
+    platform: linux/arm64
+    container_name: sitidos-revalidator
+    restart: unless-stopped
+    depends_on:
+      valkey:
+        condition: service_healthy
+      polaris:
         condition: service_healthy
     environment:
-      - NEXTAUTH_URL=http://localhost:3500
-      - NEXTAUTH_SECRET=documenso-dev-secret-CHANGE-ME
-      - NEXT_PRIVATE_ENCRYPTION_KEY=CHANGE-ME-32-bytes-base64-encoded
-      - NEXT_PRIVATE_ENCRYPTION_SECONDARY_KEY=CHANGE-ME-32-bytes-base64-encoded
-      - NEXT_PRIVATE_DATABASE_URL=postgres://documenso:documenso-dev-CHANGE-ME@documenso-db:5432/documenso
-      - NEXT_PRIVATE_DIRECT_DATABASE_URL=postgres://documenso:documenso-dev-CHANGE-ME@documenso-db:5432/documenso
-      - NEXT_PUBLIC_WEBAPP_URL=http://localhost:3500
-      - NEXT_PRIVATE_SIGNING_TRANSPORT=local
-      - DOCUMENSO_DISABLE_TELEMETRY=true
-    ports:
-      - "3500:3000"
-    volumes:
-      - ../data/documenso-files:/app/apps/web/uploads
+      - VALKEY_URL=redis://valkey:6379
+      - POLARIS_URL=http://polaris:8181
+      - VERCEL_TOKEN=${VERCEL_REVALIDATE_TOKEN:-}
+      - VERCEL_PROJECT_ID=${VERCEL_PROJECT_ID:-}
+      - CLOUDFLARE_API_TOKEN=${CF_CACHE_PURGE_TOKEN:-}
+      - CLOUDFLARE_ZONE_ID=${CF_ZONE_ID:-}
+    profiles: [f17]   # disabled by default until F17 agent ships the image
     networks: [sitidos]
 
   # -------------------------------------------------------------------------
   # LibreOffice headless (unoserver) — Office doc → PDF for DataRoom preview
+  # Kept as-is; not affected by ADR-0005 stack delta.
   # -------------------------------------------------------------------------
   unoserver:
     image: ghcr.io/unoconv/unoserver-docker:latest

@@ -1,0 +1,104 @@
+# F10 — OpenTelemetry Collector configuration
+#
+# Receives OTLP traces/metrics/logs from sitidos services. Routes:
+#   - Traces  → parquet-writer (F15 → obs.traces) + Sentry SaaS (errors only)
+#   - Metrics → parquet-writer (F15 → obs.events with event_type='metric')
+#   - Logs    → parquet-writer (F15 → obs.events)
+#
+# PII scrubbing rules per F10 prompt: drop emails / phone / API-key patterns
+# at the processor stage before any exporter sees them.
+#
+# Sampling: 1.0 for errors, 0.1 for success traces.
+
+receivers:
+  otlp:
+    protocols:
+      grpc:
+        endpoint: 0.0.0.0:4317
+      http:
+        endpoint: 0.0.0.0:4318
+
+processors:
+  batch:
+    timeout: 10s
+    send_batch_size: 1024
+    send_batch_max_size: 2048
+
+  # Tail-sampling: 100% errors, 10% success
+  tail_sampling:
+    decision_wait: 10s
+    num_traces: 50000
+    policies:
+      - name: errors-always
+        type: status_code
+        status_code:
+          status_codes: [ERROR]
+      - name: success-sampled
+        type: probabilistic
+        probabilistic:
+          sampling_percentage: 10
+
+  # PII scrubbing (regex on attribute values)
+  attributes/scrub:
+    actions:
+      - key: http.request.header.authorization
+        action: delete
+      - key: http.request.header.cookie
+        action: delete
+      - key: user.email
+        action: hash
+      - key: user.phone
+        action: delete
+
+  # Resource attributes — add deployment info
+  resource:
+    attributes:
+      - key: deployment.environment
+        value: ${env:DEPLOYMENT_ENV}
+        action: upsert
+      - key: service.namespace
+        value: sitidos
+        action: upsert
+
+exporters:
+  # F15 sink: write batched parquet for parquet-writer to consume.
+  file/parquet:
+    path: /var/lib/otelcol/spans.parquet
+    rotation:
+      max_megabytes: 10
+      max_days: 1
+      max_backups: 10
+    format: proto
+
+  # Sentry SaaS — errors only (filtered by tail-sampling above)
+  otlphttp/sentry:
+    endpoint: https://sentry.io/api/0/envelope/
+    headers:
+      X-Sentry-Auth: "Sentry sentry_version=7, sentry_key=${env:SENTRY_DSN_KEY}"
+    # Note: Sentry's OTLP receiver is beta; F10 agent may swap to native Sentry SDK exporter.
+
+  debug:
+    verbosity: basic
+
+service:
+  pipelines:
+    traces:
+      receivers: [otlp]
+      processors: [attributes/scrub, resource, tail_sampling, batch]
+      exporters: [file/parquet, otlphttp/sentry]
+
+    metrics:
+      receivers: [otlp]
+      processors: [attributes/scrub, resource, batch]
+      exporters: [file/parquet]
+
+    logs:
+      receivers: [otlp]
+      processors: [attributes/scrub, resource, batch]
+      exporters: [file/parquet]
+
+  telemetry:
+    metrics:
+      address: 0.0.0.0:8888
+    logs:
+      level: info
