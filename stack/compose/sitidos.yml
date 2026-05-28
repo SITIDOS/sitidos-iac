@@ -1,0 +1,197 @@
+# Sitidos backplane stack
+#
+# Linux/ARM64-only base images so this stack is bit-identical between
+# this macbook (dev) and the Oracle Always Free ARM Ampere box (prod cutover).
+#
+# Ports: see README.md. Adjust on the LEFT side of the colon if a host
+# port collides; never change the container-side port.
+#
+# Bring up:    docker compose -f compose/sitidos.yml up -d
+# Status:      docker compose -f compose/sitidos.yml ps
+# Tail logs:   docker compose -f compose/sitidos.yml logs -f
+# Tear down:   docker compose -f compose/sitidos.yml down
+# Wipe data:   docker compose -f compose/sitidos.yml down -v && rm -rf data/*/*
+
+name: sitidos
+
+networks:
+  sitidos:
+    driver: bridge
+
+services:
+  # -------------------------------------------------------------------------
+  # Valkey 8 — perms cache (60s TTL keyed by (user, workspace, generation))
+  # -------------------------------------------------------------------------
+  valkey:
+    image: valkey/valkey:8-alpine
+    platform: linux/arm64
+    container_name: sitidos-valkey
+    restart: unless-stopped
+    ports:
+      - "6380:6379"
+    volumes:
+      - ../data/valkey:/data
+      - ../config/valkey/valkey.conf:/etc/valkey/valkey.conf:ro
+    command: ["valkey-server", "/etc/valkey/valkey.conf"]
+    healthcheck:
+      test: ["CMD", "valkey-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+    networks: [sitidos]
+
+  # -------------------------------------------------------------------------
+  # OpenSearch — OTel log sink + p95 metrics
+  # Single-node, security disabled in dev (Cloudflare Tunnel terminates TLS).
+  # -------------------------------------------------------------------------
+  opensearch:
+    image: opensearchproject/opensearch:2.18.0
+    platform: linux/arm64
+    container_name: sitidos-opensearch
+    restart: unless-stopped
+    environment:
+      - cluster.name=sitidos
+      - node.name=sitidos-os-1
+      - discovery.type=single-node
+      - bootstrap.memory_lock=true
+      - plugins.security.disabled=true
+      - "OPENSEARCH_JAVA_OPTS=-Xms512m -Xmx512m"
+      # macOS Docker Desktop ignores ulimit memlock; harmless when migrating to Linux.
+      - DISABLE_INSTALL_DEMO_CONFIG=true
+    ulimits:
+      memlock: { soft: -1, hard: -1 }
+      nofile:  { soft: 65536, hard: 65536 }
+    ports:
+      - "9200:9200"
+      - "9600:9600"
+    volumes:
+      - ../data/opensearch:/usr/share/opensearch/data
+    healthcheck:
+      test: ["CMD-SHELL", "curl -s http://localhost:9200/_cluster/health | grep -qE '\"status\":\"(green|yellow)\"'"]
+      interval: 15s
+      timeout: 5s
+      retries: 10
+      start_period: 60s
+    networks: [sitidos]
+
+  opensearch-dashboards:
+    image: opensearchproject/opensearch-dashboards:2.18.0
+    platform: linux/arm64
+    container_name: sitidos-opensearch-dashboards
+    restart: unless-stopped
+    depends_on:
+      opensearch:
+        condition: service_healthy
+    environment:
+      - OPENSEARCH_HOSTS=["http://opensearch:9200"]
+      - DISABLE_SECURITY_DASHBOARDS_PLUGIN=true
+    ports:
+      - "5601:5601"
+    networks: [sitidos]
+
+  # -------------------------------------------------------------------------
+  # OpenBao — per-workspace cryptoshred keys + PKI engine for e-sign certs
+  # Dev mode for now; F2 agent replaces with prod auto-unseal + KV-v2 + PKI roles.
+  # -------------------------------------------------------------------------
+  openbao:
+    image: openbao/openbao:2.4.1
+    platform: linux/arm64
+    container_name: sitidos-openbao
+    restart: unless-stopped
+    cap_add: [IPC_LOCK]
+    environment:
+      - BAO_DEV_ROOT_TOKEN_ID=sitidos-dev-root-CHANGE-ME
+      - BAO_DEV_LISTEN_ADDRESS=0.0.0.0:8200
+      - BAO_ADDR=http://0.0.0.0:8200
+    ports:
+      - "8200:8200"
+    volumes:
+      - ../data/openbao:/openbao/data
+      - ../config/openbao:/openbao/config:ro
+    command: ["server", "-dev", "-dev-listen-address=0.0.0.0:8200"]
+    healthcheck:
+      test: ["CMD", "bao", "status"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 15s
+    networks: [sitidos]
+
+  # -------------------------------------------------------------------------
+  # Documenso — Tier-2 e-signature (multi-signer, sequential, audit-cert UX)
+  # AGPL boundary: called over HTTPS from FastMCP signature.sign, never linked.
+  # -------------------------------------------------------------------------
+  documenso-db:
+    image: postgres:16-alpine
+    platform: linux/arm64
+    container_name: sitidos-documenso-db
+    restart: unless-stopped
+    environment:
+      - POSTGRES_USER=documenso
+      - POSTGRES_PASSWORD=documenso-dev-CHANGE-ME
+      - POSTGRES_DB=documenso
+    volumes:
+      - ../data/documenso-db:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U documenso"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+    networks: [sitidos]
+
+  documenso:
+    image: documenso/documenso:latest
+    platform: linux/arm64
+    container_name: sitidos-documenso
+    restart: unless-stopped
+    depends_on:
+      documenso-db:
+        condition: service_healthy
+    environment:
+      - NEXTAUTH_URL=http://localhost:3500
+      - NEXTAUTH_SECRET=documenso-dev-secret-CHANGE-ME
+      - NEXT_PRIVATE_ENCRYPTION_KEY=CHANGE-ME-32-bytes-base64-encoded
+      - NEXT_PRIVATE_ENCRYPTION_SECONDARY_KEY=CHANGE-ME-32-bytes-base64-encoded
+      - NEXT_PRIVATE_DATABASE_URL=postgres://documenso:documenso-dev-CHANGE-ME@documenso-db:5432/documenso
+      - NEXT_PRIVATE_DIRECT_DATABASE_URL=postgres://documenso:documenso-dev-CHANGE-ME@documenso-db:5432/documenso
+      - NEXT_PUBLIC_WEBAPP_URL=http://localhost:3500
+      - NEXT_PRIVATE_SIGNING_TRANSPORT=local
+      - DOCUMENSO_DISABLE_TELEMETRY=true
+    ports:
+      - "3500:3000"
+    volumes:
+      - ../data/documenso-files:/app/apps/web/uploads
+    networks: [sitidos]
+
+  # -------------------------------------------------------------------------
+  # LibreOffice headless (unoserver) — Office doc → PDF for DataRoom preview
+  # -------------------------------------------------------------------------
+  unoserver:
+    image: ghcr.io/unoconv/unoserver-docker:latest
+    platform: linux/arm64
+    container_name: sitidos-unoserver
+    restart: unless-stopped
+    ports:
+      - "2003:2003"
+    networks: [sitidos]
+
+  # -------------------------------------------------------------------------
+  # uts-server — local PAdES-B-T timestamp server (fallback to FreeTSA.org)
+  # FreeTSA.org is primary per ADR-0002. This fallback is NOT WIRED yet because
+  # there is no prebuilt linux/arm64 image on Docker Hub for kakwa/uts-server.
+  # V-DataRoom agent: build from https://github.com/kakwa/uts-server source
+  # via a local Dockerfile when FreeTSA-only is no longer acceptable.
+  # Until then, this service is intentionally commented out.
+  # -------------------------------------------------------------------------
+  # uts-server:
+  #   build:
+  #     context: ../images/uts-server
+  #     platforms: [linux/arm64]
+  #   container_name: sitidos-uts-server
+  #   restart: unless-stopped
+  #   profiles: [tsa-fallback]
+  #   ports:
+  #     - "8318:2020"
+  #   volumes:
+  #     - ../config/uts-server:/etc/uts-server:ro
+  #   networks: [sitidos]
