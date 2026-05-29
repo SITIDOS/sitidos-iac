@@ -1,0 +1,34 @@
+{
+  "name": "@sitidos/valkey-client",
+  "version": "0.1.0",
+  "description": "Typed, namespace-disciplined Valkey client for Sitidos. Cannot construct keys outside the four declared namespaces (ratelimit, jwks, coalescer, revalidate).",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "files": ["dist", "src"],
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "test": "vitest run",
+    "lint": "tsc --noEmit"
+  },
+  "engines": {
+    "node": ">=22"
+  },
+  "dependencies": {
+    "iovalkey": "^0.3.1"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.0",
+    "typescript": "^5.7.2",
+    "vitest": "^2.1.8"
+  },
+  "publishConfig": {
+    "access": "restricted"
+  }
+}

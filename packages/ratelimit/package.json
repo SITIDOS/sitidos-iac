@@ -1,0 +1,35 @@
+{
+  "name": "@sitidos/ratelimit",
+  "version": "0.1.0",
+  "description": "Sliding-window rate limiter for F3 (per-route). Backed by Valkey via @sitidos/valkey-client; falls back to in-process counters when Valkey is unreachable (fail-OPEN with logged degradation, NOT on the auth path).",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "files": ["dist", "src"],
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "test": "vitest run",
+    "lint": "tsc --noEmit"
+  },
+  "engines": {
+    "node": ">=22"
+  },
+  "peerDependencies": {
+    "@sitidos/valkey-client": "0.1.0"
+  },
+  "devDependencies": {
+    "@sitidos/valkey-client": "file:../valkey-client",
+    "@types/node": "^22.10.0",
+    "typescript": "^5.7.2",
+    "vitest": "^2.1.8"
+  },
+  "publishConfig": {
+    "access": "restricted"
+  }
+}
