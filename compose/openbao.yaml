@@ -1,0 +1,65 @@
+# compose/openbao.yaml — F7-owned production-shape OpenBao service definition.
+#
+# This is a SEPARATE compose file from stack/compose/sitidos.yml. The sitidos.yml file
+# defines the dev-mode OpenBao (in-memory, root token hardcoded) that F3 brought up to
+# unblock other foundations during Phase 1. This file is the production-shape definition
+# F7 owns:
+#
+#   - Integrated storage (raft) — required for HA when we scale beyond one node.
+#   - Persistent volume — sealed at rest by OpenBao's own seal mechanism.
+#   - No dev-mode root token; init via `bao operator init` produces Shamir shares.
+#   - TLS listener (cert via mounted secret from PKI bootstrap, or Cloudflare Tunnel
+#     terminates TLS in front and OpenBao listens plain on the docker network only).
+#   - Audit log to file (consumed by F10 otel-collector via filelog receiver → obs.events).
+#
+# Compose with:
+#   docker compose \
+#     -f stack/compose/sitidos.yml \
+#     -f compose/openbao.yaml \
+#     up -d
+#
+# The override REPLACES the dev openbao service definition with the prod-shape one.
+#
+# For multi-node raft HA (Oracle ARM Ampere has 4 ARM cores; we can run 3 OpenBao nodes
+# co-located later), duplicate the `openbao` service as `openbao-1`, `openbao-2`,
+# `openbao-3`, each with a unique `node_id` in their HCL config and `retry_join` stanzas
+# pointing at the other two. Single-node raft is fine for Phase 1 / single-host dev.
+
+name: sitidos
+
+services:
+  openbao:
+    image: openbao/openbao:2.4.1
+    platform: linux/arm64
+    container_name: sitidos-openbao
+    restart: unless-stopped
+    cap_add: [IPC_LOCK]
+    # Drop dev-mode env entirely; the prod HCL config drives behavior.
+    environment:
+      - BAO_ADDR=https://openbao:8200
+      - BAO_API_ADDR=https://openbao:8200
+      - BAO_CLUSTER_ADDR=https://openbao:8201
+      - BAO_LOG_LEVEL=info
+    ports:
+      - "8200:8200"   # API
+      # 8201 (cluster) intentionally NOT published; raft peers talk on the docker network.
+    volumes:
+      - ../data/openbao:/openbao/data
+      - ../data/openbao-audit:/openbao/audit
+      - ../config/openbao:/openbao/config:ro
+    # No `command: server -dev` here. Use the HCL config in /openbao/config/openbao.hcl
+    # (shipped via stack/config/openbao/openbao.hcl — see iac/openbao/config/openbao.hcl
+    # for the canonical source).
+    command: ["server", "-config=/openbao/config/openbao.hcl"]
+    healthcheck:
+      # `bao status` exits non-zero when sealed (which is the legitimate post-restart state
+      # before unseal). Use the sys/health HTTP endpoint with status codes that accept
+      # sealed-but-initialized as healthy enough for container scheduling. Code 503 = sealed.
+      test:
+        - "CMD-SHELL"
+        - "wget -q -O- --no-check-certificate https://localhost:8200/v1/sys/health?sealedcode=200 >/dev/null"
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+    networks: [sitidos]
