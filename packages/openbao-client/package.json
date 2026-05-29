@@ -20,7 +20,7 @@
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "typecheck": "tsc -p tsconfig.json --noEmit",
-    "test": "node --test --experimental-strip-types src/*.test.ts"
+    "test": "vitest run"
   },
   "engines": {
     "node": ">=22.0.0"
@@ -28,6 +28,7 @@
   "dependencies": {},
   "devDependencies": {
     "@types/node": "^22.10.0",
-    "typescript": "^5.7.2"
+    "typescript": "^5.7.2",
+    "vitest": "^2.1.9"
   }
 }
