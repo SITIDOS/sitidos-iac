@@ -1,11 +1,11 @@
 /**
  * Smoke tests for OpenBaoClient. Uses a fake fetch — no real OpenBao required.
  *
- * Run: cd packages/openbao-client && pnpm test  (or `node --test --experimental-strip-types src/*.test.ts`)
+ * Run: cd packages/openbao-client && pnpm test  (vitest)
  */
 
 import { strict as assert } from "node:assert";
-import { describe, it } from "node:test";
+import { describe, it } from "vitest";
 
 import { OpenBaoClient } from "./client.js";
 import { CryptoshredEventEmissionError, PermissionDeniedError } from "./errors.js";
@@ -17,7 +17,10 @@ function fakeFetch(
   return (async (input: RequestInfo | URL, init?: RequestInit) => {
     const url = typeof input === "string" ? input : input.toString();
     const { status, body } = handler(url, init ?? {});
-    return new Response(JSON.stringify(body), {
+    // The Web Response constructor rejects a body for null-body statuses
+    // (101/204/205/304). OpenBao's destroyKey DELETE returns 204 No Content.
+    const nullBody = status === 101 || status === 204 || status === 205 || status === 304;
+    return new Response(nullBody ? null : JSON.stringify(body), {
       status,
       headers: { "content-type": "application/json" },
     });
