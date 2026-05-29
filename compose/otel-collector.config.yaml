@@ -1,7 +1,8 @@
-# F10 — OpenTelemetry Collector configuration (live backplane mount)
+# F10 — OpenTelemetry Collector configuration (standalone)
 #
-# Mounted at /etc/otelcol-contrib/config.yaml by stack/compose/sitidos.yml.
-# Mirrors compose/otel-collector.config.yaml (standalone) — keep in sync.
+# Mirrors stack/config/otel-collector/config.yaml; the live backplane stack
+# mounts that copy. Keep these two files byte-equivalent on PII-scrubbing
+# rules and sampling policy — they are the same contract.
 #
 # Routes (per F10 prompt):
 #   - Traces  → file/parquet (F15 → obs.traces) + Sentry SaaS (errors only)
@@ -25,12 +26,19 @@ receivers:
         endpoint: 0.0.0.0:4318
 
 processors:
+  # ---------------------------------------------------------------------------
+  # Batch — standard recommendation; sized for ARM64 single-node throughput.
+  # ---------------------------------------------------------------------------
   batch:
     timeout: 10s
     send_batch_size: 1024
     send_batch_max_size: 2048
 
-  # Tail-sampling: 100% errors, 100% >1s latency, 10% success — F10 contract.
+  # ---------------------------------------------------------------------------
+  # Tail-sampling — F10 contract: 1.0 for errors, 0.1 for success.
+  # `error-trace` policy uses status_code=ERROR; `slow-trace` keeps anything
+  # over 1s (operationally critical even if no explicit error status).
+  # ---------------------------------------------------------------------------
   tail_sampling:
     decision_wait: 10s
     num_traces: 50000
@@ -49,9 +57,13 @@ processors:
         probabilistic:
           sampling_percentage: 10
 
-  # PII scrubbing — Stage 1: delete / hash known-sensitive attribute keys.
+  # ---------------------------------------------------------------------------
+  # Attribute deletes — drop entire keys known to carry secrets / PII headers.
+  # Stage 1 of PII scrubbing.
+  # ---------------------------------------------------------------------------
   attributes/scrub_keys:
     actions:
+      # Auth / session headers
       - key: http.request.header.authorization
         action: delete
       - key: http.request.header.cookie
@@ -66,20 +78,28 @@ processors:
         action: delete
       - key: http.response.header.set_cookie
         action: delete
+      # User-identifying fields (hash → opaque correlation token)
       - key: user.email
         action: hash
       - key: user.phone
         action: hash
       - key: enduser.id
         action: hash
+      # API / service tokens
       - key: api.key
         action: delete
       - key: db.statement
-        action: delete
+        action: delete   # SQL bodies may carry literal PII; structured queries only
+      # JWT / OAuth bearer fragments
       - key: messaging.message.id
         action: hash
 
-  # PII scrubbing — Stage 2: regex redact embedded PII / secrets in values.
+  # ---------------------------------------------------------------------------
+  # Regex scrubbing — Stage 2: redact PII embedded inside free-text attribute
+  # values (e.g., URL paths, error messages, log bodies).
+  # Patterns covered: email, E.164 phone, credit card (Luhn-shaped 13–19),
+  # IBAN, JWT, generic API-key heuristics (`sk_`, `pk_`, `ghp_`, `xoxb-`, etc.).
+  # ---------------------------------------------------------------------------
   transform/scrub_pii:
     error_mode: ignore
     trace_statements:
@@ -107,6 +127,9 @@ processors:
           - replace_all_patterns(body, "value", "\\+?[1-9]\\d{7,14}", "[REDACTED_PHONE]")
           - replace_all_patterns(body, "value", "eyJ[A-Za-z0-9_\\-]+\\.[A-Za-z0-9_\\-]+\\.[A-Za-z0-9_\\-]+", "[REDACTED_JWT]")
 
+  # ---------------------------------------------------------------------------
+  # Resource — add deployment.environment + service.namespace + release.
+  # ---------------------------------------------------------------------------
   resource:
     attributes:
       - key: deployment.environment
@@ -120,6 +143,7 @@ processors:
         action: upsert
 
 exporters:
+  # F15 sink: write batched parquet for parquet-writer to consume.
   file/parquet:
     path: /var/lib/otelcol/spans.parquet
     rotation:
@@ -128,6 +152,9 @@ exporters:
       max_backups: 10
     format: proto
 
+  # Sentry SaaS — errors only (filtered by tail-sampling above).
+  # NOTE: Sentry's OTLP receiver is beta. SENTRY_DSN_KEY is the key portion of
+  # the DSN URL; full DSN provisioning is flagged for org-secret per F10 prompt.
   otlphttp/sentry:
     endpoint: https://sentry.io/api/0/envelope/
     headers:
@@ -141,6 +168,7 @@ service:
   pipelines:
     traces:
       receivers: [otlp]
+      # Scrub BEFORE tail-sampling so dropped traces never carry PII through.
       processors: [attributes/scrub_keys, transform/scrub_pii, resource, tail_sampling, batch]
       exporters: [file/parquet, otlphttp/sentry]
 

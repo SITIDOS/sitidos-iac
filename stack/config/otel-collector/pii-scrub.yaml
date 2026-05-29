@@ -1,0 +1,81 @@
+# F10 — PII scrubbing rules (collector layer)
+#
+# Authoritative list. The rules below are mirrored in:
+#   - compose/otel-collector.config.yaml   (standalone)
+#   - stack/config/otel-collector/config.yaml (live backplane)
+#   - packages/sentry-init/src/scrub.ts    (SDK-side defense in depth)
+#
+# Update all four together when adding/removing a rule.
+
+# ---------------------------------------------------------------------------
+# Stage 1 — attribute key actions (delete or hash whole values)
+# ---------------------------------------------------------------------------
+key_actions:
+  delete:
+    - http.request.header.authorization
+    - http.request.header.cookie
+    - http.request.header.set_cookie
+    - http.request.header.x_api_key
+    - http.request.header.x_sitidos_api_key
+    - http.request.header.proxy_authorization
+    - http.response.header.set_cookie
+    - api.key
+    - db.statement
+  hash:
+    - user.email
+    - user.phone
+    - enduser.id
+    - messaging.message.id
+
+# ---------------------------------------------------------------------------
+# Stage 2 — regex patterns applied to all attribute / body string values
+# ---------------------------------------------------------------------------
+regex_patterns:
+  - id: email
+    pattern: '[A-Za-z0-9._%+\-]+@[A-Za-z0-9.\-]+\.[A-Za-z]{2,}'
+    replacement: '[REDACTED_EMAIL]'
+
+  - id: phone_e164
+    pattern: '\+?[1-9]\d{7,14}'
+    replacement: '[REDACTED_PHONE]'
+
+  - id: credit_card
+    pattern: '\b(?:\d[ \-]?){12,18}\d\b'
+    replacement: '[REDACTED_PAN]'
+
+  - id: iban
+    pattern: '\b[A-Z]{2}\d{2}[A-Z0-9]{10,30}\b'
+    replacement: '[REDACTED_IBAN]'
+
+  - id: jwt
+    pattern: 'eyJ[A-Za-z0-9_\-]+\.[A-Za-z0-9_\-]+\.[A-Za-z0-9_\-]+'
+    replacement: '[REDACTED_JWT]'
+
+  - id: stripe_like
+    pattern: '\b(?:sk|pk|rk)_(?:live|test)_[A-Za-z0-9]{16,}'
+    replacement: '[REDACTED_APIKEY]'
+
+  - id: github_pat
+    pattern: '\bghp_[A-Za-z0-9]{30,}\b'
+    replacement: '[REDACTED_GHTOKEN]'
+
+  - id: slack_token
+    pattern: '\bxox[baprs]-[A-Za-z0-9\-]{10,}'
+    replacement: '[REDACTED_SLACK]'
+
+  - id: aws_access_key
+    pattern: '\bAKIA[0-9A-Z]{16}\b'
+    replacement: '[REDACTED_AWS_AK]'
+
+# ---------------------------------------------------------------------------
+# Forbidden TAG VALUES (Sentry SDK rejects; collector strips at processor stage
+# when materialized — primary defense is the SDK)
+# ---------------------------------------------------------------------------
+banned_tag_value_substrings:
+  - auth0           # D13
+  - duckdb          # D13
+  - sitidos_admin   # D14 (no native role names in tags)
+  - sitidos_owner
+  - sitidos_member
+  - sitidos_viewer
+  - sitidos_billing_admin
