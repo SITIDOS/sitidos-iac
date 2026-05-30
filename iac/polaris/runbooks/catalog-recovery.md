@@ -6,10 +6,20 @@
 **Backend:** Cloudflare R2 (S3-compatible) — bucket `sitidos-catalog`
 **Owners:** F14 (this runbook), F3 (compose supervisor), F2 (OpenBao)
 
+> **Persistence model (read first).** Polaris 1.5.0's only durable `relational-jdbc`
+> store is build-time-fixed to PostgreSQL in the locked image, which D1 bans. Per the
+> metastore decision (option B, "rebuild from R2"), Polaris runs **`in-memory`** and
+> **R2/Iceberg is the source of truth**. Consequence: the catalog is **empty after every
+> restart** and is reconstructed by walking R2 — there is NO EclipseLink/H2 store and
+> nothing is auto-rebuilt. The reconstruction is a single command:
+> `python3 iac/polaris/catalog-rebuild.py` (discovers each table's latest
+> `*.metadata.json` in R2 and `register-table`s it). This makes restarts cheap and
+> fully recoverable with zero SQL.
+
 This runbook covers four scenarios:
 
-1. **Container loss** — Polaris pod / container is gone but R2 + OpenBao intact.
-2. **Persistence loss** — Polaris EclipseLink store is corrupt / wiped but R2 intact.
+1. **Container loss / any restart** — Polaris container restarts (in-memory catalog lost) but R2 + OpenBao intact.
+2. **Persistence loss** — historical EclipseLink/H2 scenario; N/A under in-memory (kept for the relational-jdbc-on-Postgres future). Same fix: rebuild from R2.
 3. **R2 object damage** — single Iceberg table cannot be loaded; underlying R2 objects intact at an older snapshot.
 4. **Quarterly credential rotation** — non-emergency, scheduled.
 
@@ -40,9 +50,10 @@ If any precondition fails, fix that first — Polaris recovery without OpenBao o
 
 ---
 
-## 1. Container loss (R2 + OpenBao intact)
+## 1. Container loss / any restart (R2 + OpenBao intact)
 
-This is the trivial case. EclipseLink's per-container H2 store is rebuilt from the warehouse manifest on first contact.
+This is the common case. The in-memory catalog is empty after boot; reconstruct it from
+R2 with `catalog-rebuild.py`. (R2 holds every table's `metadata.json` — the source of truth.)
 
 ```bash
 cd $(git rev-parse --show-toplevel)
@@ -54,6 +65,11 @@ for i in 1 2 3 4 5 6 7 8 9 10; do
   curl -sf http://localhost:8182/q/health/ready && break
   sleep 5
 done
+
+# Reconstruct the catalog from R2 (creates the catalog if absent, re-registers every
+# table from its latest metadata.json). Needs R2_* + POLARIS_ROOT_CREDS in the env.
+python3 iac/polaris/catalog-rebuild.py
+# Expect: "✓ registered <ns>.<table>" per table, then "DONE: N registered ...".
 
 # Verify the 7 namespaces are visible.
 TOKEN=$(curl -sf -X POST \
@@ -106,11 +122,10 @@ export R2_SECRET_ACCESS_KEY=...
 
 bash iac/polaris/bootstrap.sh
 
-# 5. Re-register every Iceberg table from R2 manifests. Polaris exposes
-#    register-table for this. Use the F1-provided table inventory:
-#      iac/polaris/inventory.json (maintained by F1's nightly job)
-#    For each table, POST .../namespaces/{ns}/register with metadata_location
-#    pointing at the latest s3://sitidos-catalog/.../metadata/vN.metadata.json
+# 5. Re-register every Iceberg table from R2. catalog-rebuild.py walks R2
+#    directly (no inventory.json needed — R2 IS the inventory), picks each
+#    table's newest metadata.json, ensures namespaces, and register-tables it.
+python3 iac/polaris/catalog-rebuild.py
 ```
 
 Total expected RTO: **15–30 minutes** depending on table count.
@@ -208,6 +223,7 @@ If this returns a token, the catalog is operational and the hand-off contract ho
 |---|---|
 | `compose/polaris.yaml` | Standalone compose overlay for Polaris + publisher sidecar. |
 | `iac/polaris/bootstrap.sh` | Idempotent first-boot + re-bootstrap script. |
+| `iac/polaris/catalog-rebuild.py` | Reconstruct the in-memory catalog from R2 (run after every restart). |
 | `iac/polaris/r2-backend.json` | Declarative R2 backend + IAM model. |
 | `iac/polaris/snapshot-publisher/` | Sidecar source (Dockerfile + `publisher.py`). |
 | `iac/polaris/runbooks/catalog-recovery.md` | This file. |
