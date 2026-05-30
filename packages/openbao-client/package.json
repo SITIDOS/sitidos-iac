@@ -1,8 +1,7 @@
 {
   "name": "@sitidos/openbao-client",
   "version": "0.1.0",
-  "private": true,
-  "description": "F7 — thin typed client for the Sitidos OpenBao integration (transit-mode encrypt/decrypt + cryptoshred destroyKey).",
+  "description": "F7 \u2014 thin typed client for the Sitidos OpenBao integration (transit-mode encrypt/decrypt + cryptoshred destroyKey).",
   "license": "UNLICENSED",
   "type": "module",
   "main": "./dist/index.js",
@@ -30,5 +29,13 @@
     "@types/node": "^22.10.0",
     "typescript": "^5.7.2",
     "vitest": "^2.1.9"
+  },
+  "publishConfig": {
+    "registry": "https://npm.pkg.github.com"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/SITIDOS/sitidos-iac.git",
+    "directory": "packages/openbao-client"
   }
 }

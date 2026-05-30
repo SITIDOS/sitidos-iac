@@ -1,8 +1,7 @@
 {
   "name": "@sitidos/cloudflare-client",
   "version": "0.1.0",
-  "private": true,
-  "description": "F9 — Typed wrapper around the Cloudflare API for DNS write, cache purge, and WAF rule list. Per-service scoped tokens.",
+  "description": "F9 \u2014 Typed wrapper around the Cloudflare API for DNS write, cache purge, and WAF rule list. Per-service scoped tokens.",
   "type": "module",
   "main": "./src/index.ts",
   "types": "./src/index.ts",
@@ -20,5 +19,13 @@
     "@types/node": "^20.19.41",
     "typescript": "^5.5.4",
     "vitest": "^2.0.0"
+  },
+  "publishConfig": {
+    "registry": "https://npm.pkg.github.com"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/SITIDOS/sitidos-iac.git",
+    "directory": "packages/cloudflare-client"
   }
 }

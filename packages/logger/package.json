@@ -1,8 +1,7 @@
 {
   "name": "@sitidos/logger",
   "version": "0.1.0",
-  "private": true,
-  "description": "F10 — structured logger emitting OTel-compatible log records (service, workspace_id?, org_id?, trace_id, severity, event_type).",
+  "description": "F10 \u2014 structured logger emitting OTel-compatible log records (service, workspace_id?, org_id?, trace_id, severity, event_type).",
   "type": "module",
   "main": "src/index.ts",
   "types": "src/index.ts",
@@ -19,5 +18,13 @@
   },
   "peerDependencies": {
     "typescript": "^5.4.0"
+  },
+  "publishConfig": {
+    "registry": "https://npm.pkg.github.com"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/SITIDOS/sitidos-iac.git",
+    "directory": "packages/logger"
   }
 }

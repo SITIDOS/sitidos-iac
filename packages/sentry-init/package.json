@@ -1,8 +1,7 @@
 {
   "name": "@sitidos/sentry-init",
   "version": "0.1.0",
-  "private": true,
-  "description": "F10 — Sentry SDK drop-in for sitidos services. Auto-tags org_id + workspace_id from request context.",
+  "description": "F10 \u2014 Sentry SDK drop-in for sitidos services. Auto-tags org_id + workspace_id from request context.",
   "type": "module",
   "main": "src/index.ts",
   "types": "src/index.ts",
@@ -19,5 +18,13 @@
   },
   "peerDependencies": {
     "typescript": "^5.4.0"
+  },
+  "publishConfig": {
+    "registry": "https://npm.pkg.github.com"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/SITIDOS/sitidos-iac.git",
+    "directory": "packages/sentry-init"
   }
 }

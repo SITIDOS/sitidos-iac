@@ -36,3 +36,4 @@ packages/*/*.tsbuildinfo
 packages/*/coverage/
 package-lock.json
 .vitest-cache/
+.npmrc
