@@ -1,16 +1,20 @@
 {
   "name": "@sitidos/vercel-alias-client",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "F9 \u2014 Typed wrapper for Vercel POST /v9/projects/:id/domains (per-org alias creation). Used by F20 at org-create time.",
   "type": "module",
-  "main": "./src/index.ts",
-  "types": "./src/index.ts",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
   "exports": {
-    ".": "./src/index.ts"
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
   },
   "scripts": {
     "typecheck": "tsc --noEmit",
-    "test": "vitest run"
+    "test": "vitest run",
+    "build": "tsc -p tsconfig.json"
   },
   "dependencies": {
     "zod": "^3.23.8"
@@ -27,5 +31,9 @@
     "type": "git",
     "url": "https://github.com/SITIDOS/sitidos-iac.git",
     "directory": "packages/vercel-alias-client"
-  }
+  },
+  "files": [
+    "README.md",
+    "dist"
+  ]
 }
