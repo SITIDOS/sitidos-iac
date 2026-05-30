@@ -1,0 +1,33 @@
+name: CI
+
+# Real build + test gate. This repo (F7/F8/F9/F10/F14 infra clients) previously
+# had NO CI at all — the F10 otel-sdk build break and the F7 openbao-client test
+# failure both reached main undetected because of it.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  build-and-test:
+    name: build + test (all packages)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # Node 22: the test suites use vitest and `node --test`, both need >=22.
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      # package-lock.json is gitignored in this repo, so use install (not ci).
+      - name: Install
+        run: npm install
+
+      - name: Build all packages
+        run: npm run build --workspaces --if-present
+
+      - name: Test all packages
+        run: npm test --workspaces --if-present
