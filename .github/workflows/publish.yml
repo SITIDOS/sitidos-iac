@@ -1,0 +1,36 @@
+name: Publish packages
+
+# Publishes @sitidos/* library packages to GitHub Packages on every push to
+# main, using the automatic GITHUB_TOKEN (no PAT needed). Unchanged versions
+# are skipped (|| true) so the job stays green.
+
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          registry-url: https://npm.pkg.github.com
+          scope: '@sitidos'
+      - run: npm install
+      - run: npm run build --workspaces --if-present
+      - name: Publish each package
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          for d in packages/*/; do
+            name=$(node -p "require('./$d/package.json').name || ''" 2>/dev/null || echo "")
+            case "$name" in
+              @sitidos/*) (cd "$d" && npm publish || true) ;;
+            esac
+          done

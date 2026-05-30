@@ -1,7 +1,6 @@
 {
   "name": "@sitidos/observability",
   "version": "0.1.0",
-  "private": true,
   "description": "F10 hand-off contract: single initObservability() call wires OTel + Sentry + logger.",
   "type": "module",
   "main": "src/index.ts",
@@ -20,5 +19,13 @@
   },
   "peerDependencies": {
     "typescript": "^5.4.0"
+  },
+  "publishConfig": {
+    "registry": "https://npm.pkg.github.com"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/SITIDOS/sitidos-iac.git",
+    "directory": "packages/observability"
   }
 }
