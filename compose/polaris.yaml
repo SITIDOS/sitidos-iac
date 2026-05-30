@@ -31,7 +31,8 @@
 #   R2_SECRET_ACCESS_KEY  — Cloudflare R2 secret key (S3-compat)
 #   R2_ENDPOINT_URL       — https://<account>.r2.cloudflarestorage.com
 #   R2_BUCKET             — sitidos-catalog bucket name
-#   POLARIS_ROOT_CREDS    — bootstrap root principal "client_id:client_secret"
+#   POLARIS_ROOT_CREDS    — bootstrap root principal "realm,client_id,client_secret"
+#                           (Polaris 1.5.0 RootCredentialsSet format — comma, not colon)
 #   VALKEY_URL            — redis://valkey:6379 (consumed by snapshot-publisher)
 #
 # These are NOT committed. CI / launchd loads them from .env (gitignored) or
@@ -57,10 +58,13 @@ services:
     environment:
       # Bootstrap root principal — used ONLY by iac/polaris/bootstrap.sh on
       # first boot to create per-namespace service principals, then rotated.
-      - POLARIS_BOOTSTRAP_CREDENTIALS=${POLARIS_ROOT_CREDS:-root:CHANGE-ME-AT-BOOTSTRAP}
-      # Persistence: in-process EclipseLink (H2) for dev; F14 follow-up will
-      # back this with R2-mounted Postgres-compat. NOT in F14 v0.1 scope.
-      - polaris.persistence.type=eclipse-link
+      - POLARIS_BOOTSTRAP_CREDENTIALS=${POLARIS_ROOT_CREDS:-sitidos,root,CHANGE-ME-AT-BOOTSTRAP}
+      # Persistence: in-memory metastore for dev (Polaris 1.5.0 dropped the
+      # eclipse-link metastore — no MetaStoreManagerFactory bean for it). Table
+      # DATA still lives in R2; only catalog METADATA is in-memory (non-durable,
+      # acceptable for F14 v0.1 smoke). Durable relational-jdbc is a follow-up
+      # (but D1 bans Postgres, so that needs a sanctioned JDBC target first).
+      - polaris.persistence.type=in-memory
       - polaris.realm-context.realms=sitidos
       - polaris.features."ALLOW_OVERLAPPING_CATALOG_URLS"=true
       - polaris.features."ENABLE_GENERIC_TABLES"=true

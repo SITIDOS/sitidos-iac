@@ -85,8 +85,8 @@ services:
     container_name: sitidos-polaris
     restart: unless-stopped
     environment:
-      - POLARIS_BOOTSTRAP_CREDENTIALS=root:secret
-      - polaris.persistence.type=eclipse-link
+      - POLARIS_BOOTSTRAP_CREDENTIALS=${POLARIS_ROOT_CREDS:-sitidos,root,CHANGE-ME-AT-BOOTSTRAP}
+      - polaris.persistence.type=in-memory
       - polaris.realm-context.realms=sitidos
       - polaris.features."ALLOW_OVERLAPPING_CATALOG_URLS"=true
       - quarkus.log.level=INFO
